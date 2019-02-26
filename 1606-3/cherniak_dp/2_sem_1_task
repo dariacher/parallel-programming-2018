@@ -1,0 +1,94 @@
+#include<iostream>
+#include<math.h>
+#include<time.h>
+#include<stdlib.h>
+#define EPS (0.0000001)
+using namespace std;
+
+double func1(double x, double y)
+{
+	return (x*x*y - x) / sqrt(x + y*y*x);
+}
+
+double func2(double x, double y)
+{
+	return x*x*y*y;
+}
+
+double Simpson_1step(double(*f)(double, double), double a, double b, int N, double fixX) {
+	double h = static_cast<double>(b - a) / N;
+	double S4 = f(fixX, a + h), S2 = 0.;
+
+	for (int i = 3; i < N; i += 2)
+	{
+		S4 += f(fixX, a + i*h);
+		S2 += f(fixX, a + (i - 1)*h);
+	}
+
+	return (h / 3) * (f(fixX, a) + 4 * S4 + 2 * S2 + f(fixX, b));
+}
+
+double Simpson_Integration(double(*F)(double, double), double a1, double b1, double a2, double b2, int n) {
+	if (n <= 0)
+		return 0.;
+
+	int sign = 1;
+
+	if (abs(a1 - b1) < EPS || abs(a2 - b2) < EPS)
+		return 0.;
+	if (a1 > b1)
+	{
+		double tmp = b1;
+		b1 = a1;
+		a1 = b1;
+		sign *= -1;
+	}
+
+	if (a2 > b2)
+	{
+		double tmp = b2;
+		b2 = a2;
+		a2 = b2;
+		sign *= -1;
+	}
+
+	int N = 2 * n;
+	double h2 = static_cast<double>(b2 - a2) / N;
+
+	double I2 = 0., I3 = 0.;
+
+	for (int j = 1; j < N; ++j)
+	{
+		if (j % 2 == 1)
+			I3 += Simpson_1step(F, a1, b1, N, a2 + j*h2);
+		else
+			I2 += Simpson_1step(F, a1, b1, N, a2 + j*h2);
+	}
+
+	return sign * (h2 / 3) * (Simpson_1step(F, a1, b1, N, a2) + 2 * I2 + 4 * I3 + Simpson_1step(F, a1, b1, N, b2));
+}
+
+
+
+void main() {
+	double t1 = 0., t2 = 0.;
+	double answer;
+	int n = 10000;
+	t1 = clock();
+	answer = Simpson_Integration(&func1, 1, 2, 2, 3, n);
+	t2 = clock();
+	t2 = (t2 - t1) / CLK_TCK;
+	cout << "(x*x*y - x) / sqrt(x + y*y*x)" << endl;
+	cout << "limits x: " << 2 << "-->" << 3 << endl;
+	cout << "limits y: " << 1 << "-->" << 2 << endl;
+	cout << "answer = " << answer << ". Time = " << t2<<endl;
+	t1 = clock();
+	answer = Simpson_Integration(&func2, 1, 2, 2, 3, n);
+	t2 = clock();
+	t2 = (t2 - t1) / CLK_TCK;
+	cout << "x*x*y*y" << endl;
+	cout << "limits x: " << 2 << "-->" << 3 << endl;
+	cout << "limits y: " << 1 << "-->" << 2 << endl;
+	cout << "answer = " << answer << ". Time = " << t2<<endl;
+	system("pause");
+}
