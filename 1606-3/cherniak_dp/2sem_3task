@@ -1,0 +1,176 @@
+#include <iostream>
+#include <time.h>
+#include <tbb\parallel_reduce.h>
+#include <tbb\blocked_range.h>
+#include <tbb\task_scheduler_init.h>
+//using namespace tbb;
+
+#define Eps (0.0000000001)
+
+double func2(double x, double y)
+{
+	return x*y*y;
+}
+
+double func1(double x, double y)
+{
+	return (x*x*y - x) / sqrt(x + y*y*x);
+}
+
+
+double Step1(double(*f)(double, double), double a, double b, int N, double fixX)
+{
+	double h = (b - a) / N;
+
+	double S4 = f(fixX, a + h), S2 = 0.;
+
+	for (int i = 3; i < N; i += 2)
+	{
+		S4 += f(fixX, a + i*h);
+		S2 += f(fixX, a + (i - 1)*h);
+	}
+
+	return (h / 3) * (f(fixX, a) + 4 * S4 + 2 * S2 + f(fixX, b));
+}
+
+double Simpson2(double(*F)(double, double), double a1, double b1, double a2, double b2, int n)
+{
+	if (n <= 0)
+		return 0.;
+
+
+	if (abs(a1 - b1) < Eps || abs(a2 - b2) < Eps)
+		return 0.;
+
+	int N = 2 * n;
+
+	double h2 = (b2 - a2) / N;
+
+	double I2 = 0., I3 = 0.;
+
+	for (int j = 1; j < N; ++j)
+	{
+		if (j % 2 == 1)
+			I3 += Step1(F, a1, b1, N, a2 + j*h2);
+		else
+			I2 += Step1(F, a1, b1, N, a2 + j*h2);
+	}
+
+	return (h2 / 3) * (Step1(F, a1, b1, N, a2) + 2 * I2 + 4 * I3 + Step1(F, a1, b1, N, b2));
+}
+
+double SimpsonOMP(double(*F)(double, double), double a1, double b1, double a2, double b2, int n)
+{
+	if (n <= 0)
+		return 0.;
+
+	if (abs(a1 - b1) < Eps || abs(a2 - b2) < Eps)
+		return 0.;
+
+	int N = 2 * n;
+
+	double h2 = (b2 - a2) / N;
+
+	double I2 = 0., I3 = 0.;
+
+	int j = 0;
+#pragma omp parallel for shared(a1, b1, a2, N, h2) private(j) reduction(+:I3,I2)
+	for (j = 1; j < N; ++j)
+	{
+		if (j % 2 == 1)
+			I3 += Step1(F, a1, b1, N, a2 + j*h2);
+		else
+			I2 += Step1(F, a1, b1, N, a2 + j*h2);
+	}
+
+	return  (h2 / 3) * (Step1(F, a1, b1, N, a2) + 2 * I2 + 4 * I3 + Step1(F, a1, b1, N, b2));
+}
+
+
+class simpson_tbb_reduce
+{
+private:
+double a1, a2, b1, h2;
+int N;
+double(*F)(double, double);
+double I2;
+double I3;
+public:
+simpson_tbb_reduce(double(*_F)(double, double), double _a1, double _b1, int _N, double _a2, double _h2) :
+F(_F), a1(_a1), b1(_b1), N(_N), a2(_a2), h2(_h2), I2(0), I3(0) {}
+
+simpson_tbb_reduce(const simpson_tbb_reduce& m, tbb::split) :
+F(m.F), a1(m.a1), b1(m.b1), N(m.N), a2(m.a2), h2(m.h2), I2(0), I3(0){}
+
+void operator()(const tbb::blocked_range<int>& r)
+{
+int end = r.end();
+for (int j = r.begin(); j < end; ++j)
+{
+if (j % 2 == 1)
+I3 += Step1(F, a1, b1, N, a2 + j*h2);
+else
+I2 += Step1(F, a1, b1, N, a2 + j*h2);
+}
+}
+
+void join(const simpson_tbb_reduce &simson_functor)
+{
+I2 += simson_functor.I2;
+I3 += simson_functor.I3;
+}
+
+double getI2(){ return I2; }
+double getI3(){ return I3; }
+};
+
+double Simpson2_TBB_parallel(double(*F)(double, double), double a1, double b1, double a2, double b2, int n)
+{
+if (n <= 0)
+return 0.;
+
+if (abs(a1 - b1) < Eps || abs(a2 - b2) < Eps)
+return 0.;
+
+int N = 2 * n;
+
+double h2 = (b2 - a2) / N;
+tbb::task_scheduler_init init(2);
+simpson_tbb_reduce simpson_tbb_body(F, a1, b1, N, a2, h2);
+
+tbb::parallel_reduce(tbb::blocked_range<int>(1, N, 5), simpson_tbb_body);
+init.terminate();
+
+return  (h2 / 3) * (Step1(F, a1, b1, N, a2) + 2 * simpson_tbb_body.getI2() + 4 * simpson_tbb_body.getI3() + Step1(F, a1, b1, N, b2));
+}
+
+void main() {
+	double t1 = 0., t2 = 0., tbbTime = 0., sequentTime = 0., ompTime = 0., t3 = 0., t4 = 0.;
+	double Sequent = 0., TBB = 0., OMP = 0.;
+	int n = 10000;
+
+	std::cout << "Sequental: " << std::endl;
+	t1 = clock();
+	Sequent = Simpson2(&func1, 1, 2, 2, 3, n);
+	t2 = clock();
+	std::cout << "answer = " << Sequent << std::endl;
+	sequentTime = (t2 - t1)/CLK_TCK;
+	std::cout << "Time = " << sequentTime << std::endl << std::endl;
+	/*
+	std::cout << "OMP: " << std::endl;
+	t1 = omp_get_wtime();
+	OMP = Simpson2(&func1, 1, 2, 2, 3, n);
+	std::cout << "answer = " << OMP << std::endl;
+	t2 = omp_get_wtime();
+	ompTime = (t2 - t1) * 1000.;
+	std::cout << "Time = " << ompTime << " ms" << std::endl << std::endl;*/
+
+	t3 = clock();
+	TBB = Simpson2(&func1, 1, 2, 2, 3, n);
+	std::cout << "answer = " << TBB << std::endl;
+	t4 = clock();
+	tbbTime = (t4 - t3) /CLK_TCK;
+	std::cout << "Time = " << tbbTime <<std::endl << std::endl;
+	system("pause");
+
+}
